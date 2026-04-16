@@ -3,8 +3,8 @@ import bcrypt from "bcryptjs";
 import cors from "cors";
 import express from "express";
 import jwt from "jsonwebtoken";
-import { connectDatabase } from "./db.js";
-import { User } from "./models/User.js";
+import { connectDatabase, hasDatabaseConfig } from "./db.js";
+import { createUser, findUserByEmail, findUserById, getUserStoreLabel } from "./userStore.js";
 
 const app = express();
 const port = Number(process.env.PORT || 5000);
@@ -30,11 +30,11 @@ app.use(express.json());
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET;
 
-  if (!secret) {
+  if (!secret && process.env.NODE_ENV === "production") {
     throw new Error("Missing JWT_SECRET in environment configuration.");
   }
 
-  return secret;
+  return secret || "development-auth-secret";
 }
 
 function sanitizeUser(user) {
@@ -99,8 +99,6 @@ app.get("/api/health", (_request, response) => {
 
 app.post("/api/auth/signup", async (request, response, next) => {
   try {
-    await connectDatabase();
-
     const { name = "", email = "", password = "" } = request.body || {};
     const validationMessage = validateCredentials({ name, email, password }, true);
 
@@ -110,7 +108,7 @@ app.post("/api/auth/signup", async (request, response, next) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const existingUser = await User.findOne({ email: normalizedEmail });
+    const existingUser = await findUserByEmail(normalizedEmail);
 
     if (existingUser) {
       response.status(409).json({ message: "An account with this email already exists." });
@@ -118,7 +116,7 @@ app.post("/api/auth/signup", async (request, response, next) => {
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
-    const user = await User.create({
+    const user = await createUser({
       name: name.trim(),
       email: normalizedEmail,
       passwordHash,
@@ -136,8 +134,6 @@ app.post("/api/auth/signup", async (request, response, next) => {
 
 app.post("/api/auth/login", async (request, response, next) => {
   try {
-    await connectDatabase();
-
     const { email = "", password = "" } = request.body || {};
     const validationMessage = validateCredentials({ email, password });
 
@@ -147,7 +143,7 @@ app.post("/api/auth/login", async (request, response, next) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const user = await User.findOne({ email: normalizedEmail });
+    const user = await findUserByEmail(normalizedEmail);
 
     if (!user) {
       response.status(401).json({ message: "Invalid email or password." });
@@ -173,9 +169,7 @@ app.post("/api/auth/login", async (request, response, next) => {
 
 app.get("/api/auth/me", requireAuth, async (request, response, next) => {
   try {
-    await connectDatabase();
-
-    const user = await User.findById(request.userId);
+    const user = await findUserById(request.userId);
 
     if (!user) {
       response.status(404).json({ message: "User not found." });
@@ -202,10 +196,14 @@ app.use((error, _request, response, _next) => {
 });
 
 async function startServer() {
-  await connectDatabase();
+  if (hasDatabaseConfig()) {
+    await connectDatabase();
+  } else {
+    console.warn("MONGODB_URI is not set. Authentication is using the local file store.");
+  }
 
   app.listen(port, () => {
-    console.info(`Authentication API is running on port ${port}.`);
+    console.info(`Authentication API is running on port ${port} using ${getUserStoreLabel()}.`);
   });
 }
 

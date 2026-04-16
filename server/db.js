@@ -2,6 +2,10 @@ import mongoose from "mongoose";
 
 let cachedConnection = null;
 
+export function hasDatabaseConfig() {
+  return Boolean(process.env.MONGODB_URI);
+}
+
 export async function connectDatabase() {
   if (cachedConnection) {
     return cachedConnection;
